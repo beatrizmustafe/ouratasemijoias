@@ -1,9 +1,9 @@
 import express from 'express';
-import { GoogleGenAI } from '@google/genai';
 import {
   checkSupabaseStatus,
   getSupabasePublicServerClient,
   getSupabaseServiceAdmin,
+  resolveSupabaseEnv,
   verifySupabaseJwt,
 } from '../lib/supabaseServer.ts';
 import {
@@ -49,11 +49,12 @@ const isServerless = Boolean(
     process.env.LAMBDA_TASK_ROOT
 );
 
-function getGeminiClient(): GoogleGenAI | null {
+async function getGeminiClient() {
   const key = process.env.GEMINI_API_KEY?.trim();
   if (!key || key === 'MY_GEMINI_API_KEY') {
     return null;
   }
+  const { GoogleGenAI } = await import('@google/genai');
   return new GoogleGenAI({
     apiKey: key,
     httpOptions: {
@@ -211,6 +212,18 @@ export function createApiApp(): express.Express {
   app.get('/api/supabase/status', async (_req, res) => {
     const status = await checkSupabaseStatus();
     res.status(status.isConnected ? 200 : 503).json(status);
+  });
+
+  app.get('/api/supabase/public-config', (_req, res) => {
+    const { url, publishableKey } = resolveSupabaseEnv();
+    if (!url || !publishableKey) {
+      res.status(503).json({
+        error: 'Configuração pública do Supabase indisponível no servidor.',
+      });
+      return;
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ url, publishableKey });
   });
 
   // 1c. Authenticated Session Profile & Cart Sync
@@ -815,7 +828,7 @@ Forneça:
 "${userNote || targetProduct}"`;
       }
 
-      const geminiAi = getGeminiClient();
+      const geminiAi = await getGeminiClient();
       if (!geminiAi) {
         res.status(500).json({
           error:

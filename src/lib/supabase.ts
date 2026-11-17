@@ -1,58 +1,123 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-// Resolve configuration from Vite import.meta.env, process.env, or window config
-export const getSupabaseConfig = () => {
-  const env = (import.meta as any).env || {};
-  const procEnv = (typeof process !== 'undefined' && process.env) || {};
-  const win = typeof window !== 'undefined' ? (window as any) : {};
+// Detect password recovery redirect before Supabase Auth strips the URL hash
+let pendingRecoveryFromUrl =
+  typeof window !== 'undefined' &&
+  (window.location.hash.includes('type=recovery') ||
+    window.location.search.includes('type=recovery'));
 
+export const consumePendingPasswordRecovery = (): boolean => {
+  const value = pendingRecoveryFromUrl;
+  pendingRecoveryFromUrl = false;
+  return value;
+};
+
+// Resolve configuration from Vite build-time env, Node process.env, or window config
+export const getSupabaseConfig = () => {
   const url =
-    env.VITE_SUPABASE_URL ||
-    procEnv.VITE_SUPABASE_URL ||
-    procEnv.SUPABASE_URL ||
-    win.__SUPABASE_URL__ ||
+    import.meta.env.VITE_SUPABASE_URL ||
+    (typeof process !== 'undefined' ? process.env?.VITE_SUPABASE_URL || process.env?.SUPABASE_URL : '') ||
+    (typeof window !== 'undefined' ? (window as any).__SUPABASE_URL__ : '') ||
     '';
 
   const publishableKey =
-    env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-    env.VITE_SUPABASE_ANON_KEY ||
-    procEnv.VITE_SUPABASE_PUBLISHABLE_KEY ||
-    procEnv.SUPABASE_PUBLISHABLE_KEY ||
-    procEnv.SUPABASE_ANON_KEY ||
-    win.__SUPABASE_PUBLISHABLE_KEY__ ||
+    import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+    import.meta.env.VITE_SUPABASE_ANON_KEY ||
+    (typeof process !== 'undefined'
+      ? process.env?.VITE_SUPABASE_PUBLISHABLE_KEY ||
+        process.env?.SUPABASE_PUBLISHABLE_KEY ||
+        process.env?.SUPABASE_ANON_KEY
+      : '') ||
+    (typeof window !== 'undefined' ? (window as any).__SUPABASE_PUBLISHABLE_KEY__ : '') ||
     '';
 
-  return { url, publishableKey };
+  return {
+    url: typeof url === 'string' ? url.trim() : '',
+    publishableKey: typeof publishableKey === 'string' ? publishableKey.trim() : '',
+  };
 };
 
-const config = getSupabaseConfig();
+const isBrowser = (): boolean =>
+  typeof window !== 'undefined' && typeof document !== 'undefined';
 
-// Safe initialization of client
-export const supabase: SupabaseClient | null =
-  config.url && config.publishableKey
-    ? createClient(config.url, config.publishableKey, {
-        auth: {
-          persistSession: true,
-          autoRefreshToken: true,
-          detectSessionInUrl: true,
-        },
-      })
-    : null;
+function buildSupabaseClient(url: string, publishableKey: string): SupabaseClient | null {
+  if (!isBrowser()) {
+    return null;
+  }
 
-// Centralized helper to get or reinitialize client dynamically
+  const client = createClient(url, publishableKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  });
+
+  client.auth.onAuthStateChange((event) => {
+    if (event === 'PASSWORD_RECOVERY') {
+      pendingRecoveryFromUrl = true;
+    }
+  });
+
+  return client;
+}
+
+let cachedClient: SupabaseClient | null = null;
+if (isBrowser()) {
+  const initialConfig = getSupabaseConfig();
+  if (initialConfig.url && initialConfig.publishableKey) {
+    cachedClient = buildSupabaseClient(initialConfig.url, initialConfig.publishableKey);
+  }
+}
+
+export const supabase: SupabaseClient | null = cachedClient;
+
 export const getSupabaseClient = (): SupabaseClient | null => {
-  if (supabase) return supabase;
+  if (!isBrowser()) return null;
+  if (cachedClient) return cachedClient;
   const { url, publishableKey } = getSupabaseConfig();
   if (url && publishableKey) {
-    return createClient(url, publishableKey, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-      },
-    });
+    cachedClient = buildSupabaseClient(url, publishableKey);
+    return cachedClient;
   }
   return null;
+};
+
+let pendingClientPromise: Promise<SupabaseClient | null> | null = null;
+
+/**
+ * Guarantees a singleton Supabase browser client, falling back to the backend's
+ * public runtime configuration endpoint (/api/supabase/public-config) if Vite
+ * build-time VITE_* variables were not embedded (common in Netlify deployments).
+ */
+export const ensureSupabaseClient = async (): Promise<SupabaseClient | null> => {
+  if (!isBrowser()) return null;
+  const existing = getSupabaseClient();
+  if (existing) return existing;
+
+  if (!pendingClientPromise) {
+    pendingClientPromise = (async () => {
+      try {
+        const res = await fetch('/api/supabase/public-config', { cache: 'no-store' });
+        if (!res.ok) return null;
+        const data = await res.json().catch(() => ({}));
+        if (data?.url && data?.publishableKey) {
+          cachedClient = buildSupabaseClient(
+            String(data.url).trim(),
+            String(data.publishableKey).trim()
+          );
+          return cachedClient;
+        }
+      } catch {
+        // Non-fatal; caller surfaces configuration error
+      } finally {
+        pendingClientPromise = null;
+      }
+      return null;
+    })();
+  }
+
+  return pendingClientPromise;
 };
 
 // Check connection health against Supabase
@@ -76,7 +141,7 @@ export const testSupabaseConnection = async (): Promise<SupabaseConnectionStatus
     console.warn('Backend supabase status check failed, trying direct client:', err);
   }
 
-  const client = getSupabaseClient();
+  const client = await ensureSupabaseClient();
   const { url, publishableKey } = getSupabaseConfig();
 
   if (!client || !url || !publishableKey) {

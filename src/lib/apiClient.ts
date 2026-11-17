@@ -1,7 +1,7 @@
-import { getSupabaseClient } from './supabase.ts';
+import { ensureSupabaseClient } from './supabase.ts';
 
 export async function getActiveAccessToken(): Promise<string | null> {
-  const client = getSupabaseClient();
+  const client = await ensureSupabaseClient();
   if (!client) return null;
 
   try {

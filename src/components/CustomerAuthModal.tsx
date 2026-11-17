@@ -11,7 +11,7 @@ import {
   KeyRound,
 } from 'lucide-react';
 import type { UserProfile, Address } from '../types/index.ts';
-import { getSupabaseClient } from '../lib/supabase.ts';
+import { ensureSupabaseClient } from '../lib/supabase.ts';
 
 interface CustomerAuthModalProps {
   isOpen: boolean;
@@ -71,12 +71,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
   // Customer Login via Supabase Auth
   const handleCustomerLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const supabase = getSupabaseClient();
-    if (!supabase) {
-      setError('Cliente Supabase não configurado no navegador.');
-      return;
-    }
-    if (!email.trim() || !password.trim()) {
+    if (!email.trim() || !password) {
       setError('Informe seu e-mail e senha para entrar.');
       return;
     }
@@ -85,16 +80,25 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
     setError('');
     setInfoMessage('');
     try {
+      const supabase = await ensureSupabaseClient();
+      if (!supabase) {
+        throw new Error('Cliente Supabase não configurado. Verifique as variáveis de ambiente.');
+      }
+
       const { data, error: signInErr } = await supabase.auth.signInWithPassword({
         email: email.trim().toLowerCase(),
-        password: password.trim(),
+        password,
       });
       if (signInErr) {
-        if (signInErr.message.toLowerCase().includes('email not confirmed')) {
+        const lower = signInErr.message.toLowerCase();
+        if (lower.includes('email not confirmed')) {
           throw new Error('Confirme seu e-mail através do link enviado antes de entrar.');
         }
-        if (signInErr.message.toLowerCase().includes('invalid login credentials')) {
+        if (lower.includes('invalid login credentials')) {
           throw new Error('E-mail ou senha incorretos.');
+        }
+        if (lower.includes('invalid api key')) {
+          throw new Error('Chave pública do Supabase inválida na configuração da aplicação.');
         }
         throw new Error(signInErr.message);
       }
@@ -136,16 +140,11 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
   // Customer Register via Supabase Auth
   const handleCustomerRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    const supabase = getSupabaseClient();
-    if (!supabase) {
-      setError('Cliente Supabase não configurado no navegador.');
-      return;
-    }
-    if (!name.trim() || !email.trim() || !phone.trim() || !password.trim()) {
+    if (!name.trim() || !email.trim() || !phone.trim() || !password) {
       setError('Preencha Nome, E-mail, WhatsApp e Senha (*).');
       return;
     }
-    if (password.trim().length < 6) {
+    if (password.length < 6) {
       setError('A senha deve ter no mínimo 6 caracteres.');
       return;
     }
@@ -153,6 +152,13 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
     setLoading(true);
     setError('');
     setInfoMessage('');
+
+    const supabase = await ensureSupabaseClient();
+    if (!supabase) {
+      setLoading(false);
+      setError('Cliente Supabase não configurado. Verifique as variáveis de ambiente.');
+      return;
+    }
 
     const address: Address = {
       cep: cep.trim() || '13480-000',
@@ -166,7 +172,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
     try {
       const { data, error: signUpErr } = await supabase.auth.signUp({
         email: email.trim().toLowerCase(),
-        password: password.trim(),
+        password,
         options: {
           emailRedirectTo: window.location.origin,
           data: {
@@ -222,12 +228,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
   // Admin Login via Supabase Auth + Strict PostgreSQL Role Verification
   const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const supabase = getSupabaseClient();
-    if (!supabase) {
-      setError('Cliente Supabase não configurado.');
-      return;
-    }
-    if (!adminEmail.trim() || !adminPassword.trim()) {
+    if (!adminEmail.trim() || !adminPassword) {
       setError('E-mail e senha da administradora são obrigatórios.');
       return;
     }
@@ -236,12 +237,39 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
     setError('');
     setInfoMessage('');
     try {
+      const supabase = await ensureSupabaseClient();
+      if (!supabase) {
+        throw new Error(
+          'Cliente Supabase não configurado. Verifique SUPABASE_URL e SUPABASE_PUBLISHABLE_KEY.'
+        );
+      }
+
       const { data, error: signInErr } = await supabase.auth.signInWithPassword({
         email: adminEmail.trim().toLowerCase(),
-        password: adminPassword.trim(),
+        password: adminPassword,
       });
+
       if (signInErr) {
-        throw new Error('Credenciais inválidas ou e-mail não confirmado.');
+        const lower = (signInErr.message || '').toLowerCase();
+        if (lower.includes('email not confirmed')) {
+          throw new Error(
+            'O e-mail desta administradora ainda não foi confirmado no Supabase Auth. Confirme pelo link enviado ao e-mail antes de entrar.'
+          );
+        }
+        if (lower.includes('invalid login credentials')) {
+          throw new Error(
+            'E-mail ou senha incorretos no Supabase Auth. Se estiver tentando a senha antiga anterior à migração, use "Redefinir senha por e-mail" ou "Entrar com Link Mágico" abaixo.'
+          );
+        }
+        if (lower.includes('invalid api key')) {
+          throw new Error(
+            'Chave pública do Supabase inválida na configuração do projeto (verifique VITE_SUPABASE_PUBLISHABLE_KEY / SUPABASE_PUBLISHABLE_KEY).'
+          );
+        }
+        if (lower.includes('rate limit') || lower.includes('too many requests')) {
+          throw new Error('Muitas tentativas em sequência. Aguarde alguns minutos e tente novamente.');
+        }
+        throw new Error(signInErr.message || 'Falha ao autenticar no Supabase Auth.');
       }
 
       const token = data.session?.access_token;
@@ -265,14 +293,11 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
   };
 
   // Real Magic Link (OTP) via Supabase Auth
-  const handleRequestMagicLink = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const supabase = getSupabaseClient();
-    if (!supabase) {
-      setError('Cliente Supabase não configurado.');
-      return;
-    }
-    if (!email.trim()) {
+  const handleRequestMagicLink = async (
+    targetEmail: string,
+    shouldCreateUser = true
+  ) => {
+    if (!targetEmail.trim()) {
       setError('Informe seu e-mail cadastrado.');
       return;
     }
@@ -281,16 +306,22 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
     setError('');
     setInfoMessage('');
     try {
+      const supabase = await ensureSupabaseClient();
+      if (!supabase) {
+        throw new Error('Cliente Supabase não configurado.');
+      }
+      const clean = targetEmail.trim().toLowerCase();
       const { error: otpErr } = await supabase.auth.signInWithOtp({
-        email: email.trim().toLowerCase(),
+        email: clean,
         options: {
           emailRedirectTo: window.location.origin,
+          shouldCreateUser,
         },
       });
       if (otpErr) throw new Error(otpErr.message);
 
       setInfoMessage(
-        `Link de acesso enviado para ${email.trim().toLowerCase()}! Verifique sua caixa de entrada e clique no link para entrar automaticamente.`
+        `Link de acesso enviado para ${clean}! Verifique sua caixa de entrada e clique no link para entrar automaticamente.`
       );
     } catch (err: any) {
       setError(err?.message || 'Erro ao enviar link mágico.');
@@ -301,11 +332,6 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
 
   // Password Reset via Supabase Auth resetPasswordForEmail
   const handleResetPassword = async (targetEmail: string) => {
-    const supabase = getSupabaseClient();
-    if (!supabase) {
-      setError('Cliente Supabase não configurado.');
-      return;
-    }
     if (!targetEmail.trim()) {
       setError('Informe o e-mail da conta para enviar a recuperação de senha.');
       return;
@@ -315,16 +341,18 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
     setError('');
     setInfoMessage('');
     try {
-      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(
-        targetEmail.trim().toLowerCase(),
-        {
-          redirectTo: window.location.origin,
-        }
-      );
+      const supabase = await ensureSupabaseClient();
+      if (!supabase) {
+        throw new Error('Cliente Supabase não configurado.');
+      }
+      const clean = targetEmail.trim().toLowerCase();
+      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(clean, {
+        redirectTo: window.location.origin,
+      });
       if (resetErr) throw new Error(resetErr.message);
 
       setInfoMessage(
-        `Instruções de redefinição de senha enviadas para ${targetEmail.trim().toLowerCase()}. Verifique seu e-mail.`
+        `Instruções de redefinição de senha enviadas para ${clean}. Verifique seu e-mail.`
       );
     } catch (err: any) {
       setError(err?.message || 'Erro ao solicitar redefinição de senha.');
@@ -694,7 +722,13 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
 
             {/* Customer Magic Link Flow */}
             {customerMode === 'magic' && (
-              <form onSubmit={handleRequestMagicLink} className="space-y-3">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleRequestMagicLink(email, true);
+                }}
+                className="space-y-3"
+              >
                 <div>
                   <label className="text-[11px] font-semibold text-stone-700 block mb-1">
                     Seu E-mail Cadastrado
@@ -821,6 +855,20 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
               <ShieldCheck className="w-4 h-4 text-amber-300" />
               <span>{loading ? 'Verificando...' : 'Entrar no Painel Administrativo'}</span>
             </button>
+
+            <div className="pt-2 border-t border-stone-200 text-center">
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() =>
+                  handleRequestMagicLink(adminEmail || 'ouratasemijoias@gmail.com', false)
+                }
+                className="w-full py-2.5 px-3 rounded-xl border border-stone-300 bg-stone-50 hover:bg-stone-100 text-stone-700 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
+              >
+                <Mail className="w-3.5 h-3.5 text-[#B47B8E]" />
+                <span>Entrar com Link Mágico por E-mail</span>
+              </button>
+            </div>
           </form>
         )}
       </div>

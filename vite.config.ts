@@ -1,43 +1,55 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 
-function extractCleanSupabaseUrl(raw?: string): string {
+function parsePublicEnvEntry(raw: string | undefined, targetKey: string): string {
   if (!raw) return '';
-  const match = raw.match(/https:\/\/[a-zA-Z0-9-]+\.supabase\.co/);
-  if (match) return match[0];
-  if (raw.startsWith('https://') && !raw.includes(' ')) return raw.trim();
+  const trimmed = raw.trim();
+  const regex = new RegExp(`${targetKey}\\s*=\\s*([^\\s"']+)`);
+  const match = trimmed.match(regex);
+  if (match && match[1]) {
+    return match[1].trim();
+  }
+  if (targetKey === 'SUPABASE_URL' || targetKey === 'VITE_SUPABASE_URL') {
+    const urlMatch = trimmed.match(/https:\/\/[a-zA-Z0-9-]+\.supabase\.co/);
+    if (urlMatch) return urlMatch[0];
+  }
+  if (!trimmed.includes(' ') && !trimmed.includes('=') && !trimmed.toLowerCase().includes('secret')) {
+    return trimmed;
+  }
   return '';
 }
 
-function extractCleanPublishableKey(raw?: string): string {
-  if (!raw) return '';
-  const pubMatch = raw.match(/sb_publishable_[a-zA-Z0-9_-]+/);
-  if (pubMatch) return pubMatch[0];
-  const jwtMatch = raw.match(/eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/);
-  if (jwtMatch && !raw.includes('SECRET')) return jwtMatch[0];
-  if (!raw.includes(' ') && !raw.includes('=') && !raw.includes('secret')) return raw.trim();
-  return '';
-}
+export default defineConfig(({ mode }) => {
+  const fileEnv = loadEnv(mode, process.cwd(), '');
+  const getVar = (name: string) => process.env[name] || fileEnv[name] || '';
 
-export default defineConfig(() => {
-  const cleanUrl = extractCleanSupabaseUrl(
-    process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
-  );
-  const cleanPublishableKey = extractCleanPublishableKey(
-    process.env.SUPABASE_PUBLISHABLE_KEY ||
-      process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-      process.env.SUPABASE_ANON_KEY ||
-      process.env.VITE_SUPABASE_ANON_KEY ||
-      process.env.SUPABASE_URL
-  );
+  const rawUrl = getVar('VITE_SUPABASE_URL') || getVar('SUPABASE_URL');
+  const rawPub =
+    getVar('VITE_SUPABASE_PUBLISHABLE_KEY') ||
+    getVar('SUPABASE_PUBLISHABLE_KEY') ||
+    getVar('VITE_SUPABASE_ANON_KEY') ||
+    getVar('SUPABASE_ANON_KEY');
+
+  const cleanUrl =
+    parsePublicEnvEntry(rawUrl, 'VITE_SUPABASE_URL') ||
+    parsePublicEnvEntry(rawUrl, 'SUPABASE_URL') ||
+    parsePublicEnvEntry(getVar('SUPABASE_URL'), 'SUPABASE_URL');
+
+  const cleanPublishableKey =
+    parsePublicEnvEntry(rawPub, 'VITE_SUPABASE_PUBLISHABLE_KEY') ||
+    parsePublicEnvEntry(rawPub, 'SUPABASE_PUBLISHABLE_KEY') ||
+    parsePublicEnvEntry(rawPub, 'VITE_SUPABASE_ANON_KEY') ||
+    parsePublicEnvEntry(rawPub, 'SUPABASE_ANON_KEY') ||
+    parsePublicEnvEntry(getVar('SUPABASE_URL'), 'SUPABASE_PUBLISHABLE_KEY') ||
+    parsePublicEnvEntry(getVar('SUPABASE_URL'), 'SUPABASE_ANON_KEY');
 
   return {
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(process.cwd(), '.'),
       },
     },
     define: {
@@ -46,12 +58,21 @@ export default defineConfig(() => {
       'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(cleanUrl),
       'import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY': JSON.stringify(cleanPublishableKey),
     },
+    optimizeDeps: {
+      entries: ['index.html', 'src/main.tsx'],
+    },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
+      ws: process.env.DISABLE_HMR === 'true' ? false : undefined,
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      watch:
+        process.env.DISABLE_HMR === 'true'
+          ? null
+          : {
+              ignored: ['**/.backup-*/**', '**/data/**', '**/supabase/**', '**/dist/**'],
+            },
     },
   };
 });

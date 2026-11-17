@@ -50,6 +50,20 @@ export function resolveSupabaseEnv() {
   return { url, publishableKey, secretKey, rawUrlMalformed };
 }
 
+class ServerNoopWebSocket {}
+
+function createServerSupabaseClient(url: string, key: string): SupabaseClient {
+  return createClient(url, key, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+    ...(typeof globalThis.WebSocket === 'undefined'
+      ? { realtime: { transport: ServerNoopWebSocket as any } }
+      : {}),
+  });
+}
+
 /**
  * Returns a privileged Supabase client backed strictly by SUPABASE_SECRET_KEY / SUPABASE_SERVICE_ROLE_KEY.
  * Returns null if the secret key is not configured (never falls back silently to publishable key).
@@ -60,12 +74,7 @@ export function getSupabaseServiceAdmin(): SupabaseClient | null {
     return null;
   }
 
-  return createClient(url, secretKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
+  return createServerSupabaseClient(url, secretKey);
 }
 
 /**
@@ -82,12 +91,7 @@ export function getSupabasePublicServerClient(): SupabaseClient | null {
     return null;
   }
 
-  return createClient(url, key, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
+  return createServerSupabaseClient(url, key);
 }
 
 /**
@@ -172,12 +176,7 @@ export async function checkSupabaseStatus() {
     };
   }
 
-  const client = createClient(url, secretKey || publishableKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
+  const client = createServerSupabaseClient(url, secretKey || publishableKey);
 
   const tablesToCheck = [
     'profiles',

@@ -12,7 +12,10 @@ import type {
   Order,
   ProductCategory,
 } from './types/index.ts';
-import { getSupabaseClient } from './lib/supabase.ts';
+import {
+  consumePendingPasswordRecovery,
+  ensureSupabaseClient,
+} from './lib/supabase.ts';
 import { authFetch } from './lib/apiClient.ts';
 
 // Components
@@ -157,13 +160,8 @@ export default function App() {
 
   // Restore & observe Supabase Auth session cleanly
   useEffect(() => {
-    const supabase = getSupabaseClient();
-    if (!supabase) {
-      localStorage.removeItem('ourata_user');
-      return;
-    }
-
     let isMounted = true;
+    let unsubscribe: (() => void) | undefined;
 
     const hydrateSession = async (accessToken?: string) => {
       try {
@@ -238,30 +236,57 @@ export default function App() {
       }
     };
 
-    supabase.auth.getSession().then(({ data }) => {
-      hydrateSession(data.session?.access_token);
-    });
-
-    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'PASSWORD_RECOVERY') {
-        setPasswordRecoveryOpen(true);
+    const initAuth = async () => {
+      // Surface auth redirect errors (e.g. expired magic link) if present in URL
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const queryParams = new URLSearchParams(window.location.search);
+      const urlErrDesc =
+        hashParams.get('error_description') || queryParams.get('error_description');
+      if (urlErrDesc) {
+        showToast(urlErrDesc);
       }
-      if (event === 'SIGNED_OUT') {
-        if (isMounted) {
-          setCurrentUser(null);
-          setIsAdminView(false);
-          setCartHydratedForUser(null);
-        }
+
+      const supabase = await ensureSupabaseClient();
+      if (!isMounted) return;
+      if (!supabase) {
+        localStorage.removeItem('ourata_user');
         return;
       }
-      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
-        hydrateSession(session?.access_token);
+
+      if (consumePendingPasswordRecovery()) {
+        setPasswordRecoveryOpen(true);
       }
-    });
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (isMounted) {
+        await hydrateSession(sessionData.session?.access_token);
+      }
+
+      const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+        if (event === 'PASSWORD_RECOVERY') {
+          setPasswordRecoveryOpen(true);
+        }
+        if (event === 'SIGNED_OUT') {
+          if (isMounted) {
+            setCurrentUser(null);
+            setIsAdminView(false);
+            setCartHydratedForUser(null);
+          }
+          return;
+        }
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+          hydrateSession(session?.access_token);
+        }
+      });
+
+      unsubscribe = () => listener.subscription.unsubscribe();
+    };
+
+    initAuth();
 
     return () => {
       isMounted = false;
-      listener.subscription.unsubscribe();
+      if (unsubscribe) unsubscribe();
     };
   }, []);
 
@@ -777,7 +802,8 @@ export default function App() {
           currentUser={currentUser}
           onLogout={async () => {
             try {
-              await getSupabaseClient()?.auth.signOut();
+              const sb = await ensureSupabaseClient();
+              await sb?.auth.signOut();
             } catch {
               // ignore
             }
@@ -871,16 +897,16 @@ export default function App() {
               onSubmit={async (e) => {
                 e.preventDefault();
                 setRecoveryError('');
-                if (recoveryPassword.trim().length < 6) {
+                if (recoveryPassword.length < 6) {
                   setRecoveryError('A nova senha deve ter no mínimo 6 caracteres.');
                   return;
                 }
                 setRecoveryLoading(true);
                 try {
-                  const sb = getSupabaseClient();
+                  const sb = await ensureSupabaseClient();
                   if (!sb) throw new Error('Supabase Auth indisponível.');
                   const { error } = await sb.auth.updateUser({
-                    password: recoveryPassword.trim(),
+                    password: recoveryPassword,
                   });
                   if (error) throw error;
                   setPasswordRecoveryOpen(false);
