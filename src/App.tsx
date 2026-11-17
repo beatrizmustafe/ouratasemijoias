@@ -12,6 +12,8 @@ import type {
   Order,
   ProductCategory,
 } from './types/index.ts';
+import { getSupabaseClient } from './lib/supabase.ts';
+import { authFetch } from './lib/apiClient.ts';
 
 // Components
 import { Header } from './components/Header.tsx';
@@ -41,6 +43,8 @@ import {
   ShieldCheck,
   Trash2,
   ImagePlus,
+  Lock,
+  X,
 } from 'lucide-react';
 
 const CATEGORIES: ('Todos' | ProductCategory)[] = [
@@ -60,16 +64,16 @@ export default function App() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
 
-  // User & Navigation state
+  // User & Navigation state (strictly hydrated from active Supabase Auth session)
   const [isAdminView, setIsAdminView] = useState(false);
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
-    try {
-      const saved = localStorage.getItem('ourata_user');
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [cartHydratedForUser, setCartHydratedForUser] = useState<string | null>(null);
+
+  // Password recovery modal (triggered via Supabase resetPasswordForEmail link)
+  const [passwordRecoveryOpen, setPasswordRecoveryOpen] = useState(false);
+  const [recoveryPassword, setRecoveryPassword] = useState('');
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
+  const [recoveryError, setRecoveryError] = useState('');
 
   const isAdmin = currentUser?.role === 'admin';
 
@@ -150,6 +154,131 @@ export default function App() {
       localStorage.removeItem('ourata_user');
     }
   }, [currentUser]);
+
+  // Restore & observe Supabase Auth session cleanly
+  useEffect(() => {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      localStorage.removeItem('ourata_user');
+      return;
+    }
+
+    let isMounted = true;
+
+    const hydrateSession = async (accessToken?: string) => {
+      try {
+        if (!accessToken) {
+          if (isMounted) {
+            setCurrentUser(null);
+            setCartHydratedForUser(null);
+          }
+          return;
+        }
+
+        const headers = { Authorization: `Bearer ${accessToken}` };
+        const meRes = await fetch('/api/auth/me', { headers });
+        if (!meRes.ok) {
+          if (isMounted) {
+            setCurrentUser(null);
+            setCartHydratedForUser(null);
+          }
+          return;
+        }
+
+        const meData = await meRes.json();
+        let resolvedUser: UserProfile | null = meData.user || null;
+
+        // Sync pending profile from email-confirmation signup if available
+        const pendingRaw = localStorage.getItem('ourata_pending_profile');
+        if (resolvedUser && pendingRaw) {
+          try {
+            const pending = JSON.parse(pendingRaw);
+            const profRes = await fetch('/api/auth/profile', {
+              method: 'PUT',
+              headers: { ...headers, 'Content-Type': 'application/json' },
+              body: JSON.stringify(pending),
+            });
+            if (profRes.ok) {
+              const profData = await profRes.json();
+              if (profData.user) resolvedUser = profData.user;
+            }
+          } catch {
+            // ignore
+          } finally {
+            localStorage.removeItem('ourata_pending_profile');
+          }
+        }
+
+        if (!isMounted || !resolvedUser) return;
+        setCurrentUser(resolvedUser);
+
+        // Merge favorites
+        if (Array.isArray(resolvedUser.favorites) && resolvedUser.favorites.length > 0) {
+          setWishlist((prev) => Array.from(new Set([...resolvedUser!.favorites, ...prev])));
+        }
+
+        // Hydrate cart from Supabase if local cart empty, else keep local and sync
+        const cartRes = await fetch('/api/cart', { headers });
+        if (cartRes.ok && isMounted) {
+          const cartData = await cartRes.json();
+          const hydratedItems: CartItem[] = Array.isArray(cartData.items)
+            ? cartData.items
+                .filter((it: any) => it?.product && Number(it?.quantity) > 0)
+                .map((it: any) => ({ product: it.product, quantity: Number(it.quantity) }))
+            : [];
+          if (hydratedItems.length > 0) {
+            setCart((prev) => (prev.length > 0 ? prev : hydratedItems));
+          }
+        }
+        if (isMounted) {
+          setCartHydratedForUser(resolvedUser.id);
+        }
+      } catch (err) {
+        console.warn('Error hydrating auth session:', err);
+      }
+    };
+
+    supabase.auth.getSession().then(({ data }) => {
+      hydrateSession(data.session?.access_token);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setPasswordRecoveryOpen(true);
+      }
+      if (event === 'SIGNED_OUT') {
+        if (isMounted) {
+          setCurrentUser(null);
+          setIsAdminView(false);
+          setCartHydratedForUser(null);
+        }
+        return;
+      }
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+        hydrateSession(session?.access_token);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  // Persist logged-in user cart changes to Supabase
+  useEffect(() => {
+    if (!currentUser || cartHydratedForUser !== currentUser.id) return;
+    const timer = setTimeout(() => {
+      authFetch('/api/cart', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: cart.map((it) => ({ productId: it.product.id, quantity: it.quantity })),
+        }),
+      }).catch(() => {});
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [cart, currentUser, cartHydratedForUser]);
 
   // Fetch products from server
   const loadProducts = async () => {
@@ -236,13 +365,21 @@ export default function App() {
   const handleToggleFavorite = (productId: string) => {
     setWishlist((prev) => {
       const exists = prev.includes(productId);
-      if (exists) {
-        showToast('Removido dos favoritos.');
-        return prev.filter((id) => id !== productId);
-      } else {
-        showToast('Adicionado aos favoritos!');
-        return [...prev, productId];
+      const next = exists
+        ? prev.filter((id) => id !== productId)
+        : [...prev, productId];
+      showToast(exists ? 'Removido dos favoritos.' : 'Adicionado aos favoritos!');
+
+      if (currentUser) {
+        setCurrentUser((u) => (u ? { ...u, favorites: next } : null));
+        authFetch('/api/auth/profile', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ favorites: next }),
+        }).catch(() => {});
       }
+
+      return next;
     });
   };
 
@@ -292,7 +429,7 @@ export default function App() {
         };
       });
 
-      const res = await fetch('/api/orders', {
+      const res = await authFetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -312,22 +449,6 @@ export default function App() {
       setIsCartOpen(false);
       setLastOrder(data.order);
       loadProducts(); // Refresh products to update reserved stock!
-
-      // If user is not logged in, auto-save customer profile
-      if (!currentUser) {
-        setCurrentUser({
-          id: data.order.customerId,
-          name: checkoutData.customer.name,
-          email: checkoutData.customer.email,
-          phone: checkoutData.customer.phone,
-          cpf: checkoutData.customer.cpf,
-          role: 'customer',
-          address: checkoutData.customer.shippingAddress,
-          isVerified: true,
-          favorites: wishlist,
-          createdAt: new Date().toISOString(),
-        });
-      }
     } catch (err: any) {
       alert(`Falha no checkout: ${err.message}`);
     } finally {
@@ -347,12 +468,9 @@ export default function App() {
     if (!isAdmin || !catalogDeleteProduct) return;
     setIsDeletingCatalogProduct(true);
     try {
-      const res = await fetch(`/api/products/${catalogDeleteProduct.id}`, {
+      const res = await authFetch(`/api/products/${catalogDeleteProduct.id}`, {
         method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-id': currentUser!.id,
-        },
+        headers: { 'Content-Type': 'application/json' },
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -657,14 +775,39 @@ export default function App() {
           isOpen={isProfileOpen}
           onClose={() => setIsProfileOpen(false)}
           currentUser={currentUser}
-          onLogout={() => {
+          onLogout={async () => {
+            try {
+              await getSupabaseClient()?.auth.signOut();
+            } catch {
+              // ignore
+            }
+            localStorage.removeItem('ourata_user');
             setCurrentUser(null);
+            setIsAdminView(false);
             setIsProfileOpen(false);
             showToast('Você saiu da sua conta.');
           }}
-          onUpdateProfile={(updated) => {
-            setCurrentUser((prev) => (prev ? { ...prev, ...updated } : null));
-            showToast('Dados atualizados com sucesso!');
+          onUpdateProfile={async (updated) => {
+            try {
+              const res = await authFetch('/api/auth/profile', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updated),
+              });
+              if (res.ok) {
+                const data = await res.json();
+                if (data.user) {
+                  setCurrentUser(data.user);
+                } else {
+                  setCurrentUser((prev) => (prev ? { ...prev, ...updated } : null));
+                }
+              } else {
+                setCurrentUser((prev) => (prev ? { ...prev, ...updated } : null));
+              }
+              showToast('Dados atualizados com sucesso!');
+            } catch {
+              showToast('Erro ao salvar alterações no servidor.');
+            }
           }}
           allProducts={products}
           onAddToCart={handleAddToCart}
@@ -677,7 +820,6 @@ export default function App() {
         onClose={() => setIsAiOpen(false)}
         initialProductName={aiProductContext.name}
         initialCategory={aiProductContext.category}
-        adminId={currentUser?.id || 'admin-01'}
         onApplyToProduct={(text, field) => {
           showToast(`Conteúdo copiado! Você pode colar em ${field === 'name' ? 'Nome' : 'Descrição'}.`);
         }}
@@ -687,7 +829,6 @@ export default function App() {
       {isAdmin && catalogPhotoProduct && (
         <ProductPhotoManagerModal
           product={catalogPhotoProduct}
-          adminId={currentUser!.id}
           onClose={() => setCatalogPhotoProduct(null)}
           onProductUpdated={(updated) => {
             setCatalogPhotoProduct(updated);
@@ -701,6 +842,82 @@ export default function App() {
             setCatalogDeleteProduct(prod);
           }}
         />
+      )}
+
+      {/* Supabase Password Recovery Modal */}
+      {passwordRecoveryOpen && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="relative bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-[#E8D9DF] space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-[#E8D9DF]">
+              <div className="flex items-center gap-2 text-[#221C1E]">
+                <Lock className="w-5 h-5 text-[#B47B8E]" />
+                <h3 className="font-serif text-lg font-bold">Definir Nova Senha</h3>
+              </div>
+              <button
+                onClick={() => setPasswordRecoveryOpen(false)}
+                className="p-1 text-stone-400 hover:text-stone-700 rounded-full cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {recoveryError && (
+              <div className="p-3 text-xs bg-rose-50 text-rose-700 rounded-lg border border-rose-200">
+                {recoveryError}
+              </div>
+            )}
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setRecoveryError('');
+                if (recoveryPassword.trim().length < 6) {
+                  setRecoveryError('A nova senha deve ter no mínimo 6 caracteres.');
+                  return;
+                }
+                setRecoveryLoading(true);
+                try {
+                  const sb = getSupabaseClient();
+                  if (!sb) throw new Error('Supabase Auth indisponível.');
+                  const { error } = await sb.auth.updateUser({
+                    password: recoveryPassword.trim(),
+                  });
+                  if (error) throw error;
+                  setPasswordRecoveryOpen(false);
+                  setRecoveryPassword('');
+                  showToast('Senha redefinida com sucesso!');
+                } catch (err: any) {
+                  setRecoveryError(err?.message || 'Erro ao atualizar senha.');
+                } finally {
+                  setRecoveryLoading(false);
+                }
+              }}
+              className="space-y-4"
+            >
+              <div>
+                <label className="text-[11px] font-semibold text-stone-700 block mb-1">
+                  Nova Senha (mínimo 6 caracteres)
+                </label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={recoveryPassword}
+                  onChange={(e) => setRecoveryPassword(e.target.value)}
+                  placeholder="Digite sua nova senha"
+                  className="w-full text-xs p-2.5 rounded-xl border border-stone-300 focus:outline-none focus:border-[#B47B8E]"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={recoveryLoading}
+                className="w-full bg-[#B47B8E] hover:bg-[#975F72] text-white py-2.5 rounded-xl text-xs font-semibold cursor-pointer disabled:opacity-50"
+              >
+                {recoveryLoading ? 'Salvando...' : 'Confirmar Nova Senha'}
+              </button>
+            </form>
+          </div>
+        </div>
       )}
 
       {/* Admin-only Catalog Product Delete Confirmation Modal */}

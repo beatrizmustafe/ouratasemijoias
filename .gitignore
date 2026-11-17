@@ -14,3 +14,4 @@ data/uploads/
 
 # Artefatos e arquivos temporários de sessão
 .aistudio/
+.backup-*/

@@ -209,7 +209,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   <img
                     src={
                       item.product.images?.[0] ||
-                      '/src/assets/images/earrings_gold_zirconia_1794270256870.jpg'
+                      '/assets/images/earrings_gold_zirconia_1794270256870.jpg'
                     }
                     alt={item.product.name}
                     className="w-20 h-20 rounded-lg object-cover bg-stone-100 shrink-0 border border-stone-100"

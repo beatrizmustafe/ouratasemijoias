@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { UserProfile, Order, Product } from '../types/index.ts';
 import { generateOrderPdf } from '../utils/pdfGenerator.ts';
+import { authFetch } from '../lib/apiClient.ts';
 
 interface CustomerDashboardProps {
   isOpen: boolean;
@@ -52,11 +53,24 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
   const [cep, setCep] = useState(currentUser.address?.cep || '');
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  // Fetch orders for this customer
+  useEffect(() => {
+    setName(currentUser.name || '');
+    setPhone(currentUser.phone || '');
+    setCpf(currentUser.cpf || '');
+    setStreet(currentUser.address?.street || '');
+    setNumber(currentUser.address?.number || '');
+    setComplement(currentUser.address?.complement || '');
+    setNeighborhood(currentUser.address?.neighborhood || '');
+    setCity(currentUser.address?.city || 'Limeira');
+    setState(currentUser.address?.state || 'SP');
+    setCep(currentUser.address?.cep || '');
+  }, [currentUser]);
+
+  // Fetch orders for this authenticated customer via Supabase JWT
   useEffect(() => {
     setLoadingOrders(true);
-    fetch(`/api/orders?customerId=${currentUser.id}`)
-      .then((r) => r.json())
+    authFetch('/api/orders')
+      .then((r) => (r.ok ? r.json() : { orders: [] }))
       .then((d) => setOrders(d.orders || []))
       .catch((err) => console.error(err))
       .finally(() => setLoadingOrders(false));

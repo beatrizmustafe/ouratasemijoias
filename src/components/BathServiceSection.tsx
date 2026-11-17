@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { BathService } from '../types/index.ts';
 import { generateBathServicePdf } from '../utils/pdfGenerator.ts';
+import { authFetch } from '../lib/apiClient.ts';
 
 interface BathServiceSectionProps {
   onSuccessToast?: (msg: string) => void;
@@ -21,7 +22,7 @@ export const BathServiceSection: React.FC<BathServiceSectionProps> = ({
   onSuccessToast,
 }) => {
   const atelierBanner =
-    '/src/assets/images/jewelry_plating_atelier_1794270259239.jpg';
+    '/assets/images/jewelry_plating_atelier_1794270259239.jpg';
 
   // Request form state
   const [customerName, setCustomerName] = useState('');
@@ -58,7 +59,7 @@ export const BathServiceSection: React.FC<BathServiceSectionProps> = ({
 
     setIsSubmitting(true);
     try {
-      const res = await fetch('/api/bath-services', {
+      const res = await authFetch('/api/bath-services', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

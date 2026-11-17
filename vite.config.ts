@@ -29,6 +29,7 @@ export default defineConfig(() => {
     process.env.SUPABASE_PUBLISHABLE_KEY ||
       process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
       process.env.SUPABASE_ANON_KEY ||
+      process.env.VITE_SUPABASE_ANON_KEY ||
       process.env.SUPABASE_URL
   );
 
@@ -42,6 +43,8 @@ export default defineConfig(() => {
     define: {
       'process.env.SUPABASE_URL': JSON.stringify(cleanUrl),
       'process.env.SUPABASE_PUBLISHABLE_KEY': JSON.stringify(cleanPublishableKey),
+      'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(cleanUrl),
+      'import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY': JSON.stringify(cleanPublishableKey),
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.

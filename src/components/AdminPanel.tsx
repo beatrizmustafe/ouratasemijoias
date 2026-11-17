@@ -43,6 +43,7 @@ import type {
 } from '../types/index.ts';
 import { generateOrderPdf, generateBathServicePdf } from '../utils/pdfGenerator.ts';
 import { ProductPhotoManagerModal } from './ProductPhotoManagerModal.tsx';
+import { authFetch } from '../lib/apiClient.ts';
 
 interface AdminPanelProps {
   currentUser?: UserProfile | null;
@@ -80,12 +81,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Request headers helper strictly authenticating single admin
-  const adminHeaders: HeadersInit = {
-    'Content-Type': 'application/json',
-    'x-admin-id': currentUser?.id || 'admin-01',
-  };
-
   // Filters & searches
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>('todos');
   const [productSearch, setProductSearch] = useState('');
@@ -120,7 +115,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [formLowStockAlert, setFormLowStockAlert] = useState<number>(5);
   const [formPlating, setFormPlating] = useState('Banho Ouro 18k (10 milésimos) + Verniz Diamond');
   const [formImages, setFormImages] = useState<string[]>([
-    '/src/assets/images/earrings_gold_zirconia_1794270256870.jpg',
+    '/assets/images/earrings_gold_zirconia_1794270256870.jpg',
   ]);
   const [formNewImageUrl, setFormNewImageUrl] = useState('');
   const [uploadingFormImage, setUploadingFormImage] = useState(false);
@@ -128,13 +123,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const fetchAllData = async () => {
     setLoading(true);
     try {
+      const safeJson = async (res: Response) => (res.ok ? res.json().catch(() => ({})) : {});
       const [dashRes, prodRes, ordRes, bathRes, movRes, logRes] = await Promise.all([
-        fetch('/api/admin/dashboard', { headers: adminHeaders }).then((r) => r.json()),
-        fetch('/api/products').then((r) => r.json()),
-        fetch('/api/orders').then((r) => r.json()),
-        fetch('/api/bath-services').then((r) => r.json()),
-        fetch('/api/stock/history').then((r) => r.json()),
-        fetch('/api/admin/audit-logs', { headers: adminHeaders }).then((r) => r.json()),
+        authFetch('/api/admin/dashboard').then(safeJson),
+        fetch('/api/products').then(safeJson),
+        authFetch('/api/orders').then(safeJson),
+        authFetch('/api/bath-services').then(safeJson),
+        authFetch('/api/stock/history').then(safeJson),
+        authFetch('/api/admin/audit-logs').then(safeJson),
       ]);
 
       setDashboardData(dashRes);
@@ -154,6 +150,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     fetchAllData();
   }, []);
 
+  useEffect(() => {
+    if (currentUser) {
+      setAdminName(currentUser.name || 'Diana — Dona da Loja');
+      setAdminEmail(currentUser.email || '');
+      setAdminPhone(currentUser.phone || '(19) 98806-4749');
+    }
+  }, [currentUser]);
+
   const handleOpenCreateProduct = () => {
     setEditingProduct(null);
     setFormSku(`OUR-NEW-${Math.floor(100 + Math.random() * 900)}`);
@@ -165,7 +169,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setFormStock(20);
     setFormLowStockAlert(5);
     setFormPlating('Banho Ouro 18k (10 milésimos) + Verniz Diamond');
-    setFormImages(['/src/assets/images/earrings_gold_zirconia_1794270256870.jpg']);
+    setFormImages(['/assets/images/earrings_gold_zirconia_1794270256870.jpg']);
     setFormNewImageUrl('');
     setProductModalOpen(true);
   };
@@ -204,9 +208,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           reader.onerror = () => reject(new Error(`Erro ao ler "${file.name}".`));
           reader.readAsDataURL(file);
         });
-        const res = await fetch('/api/admin/upload-image', {
+        const res = await authFetch('/api/admin/upload-image', {
           method: 'POST',
-          headers: adminHeaders,
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ dataUrl, fileName: file.name }),
         });
         const data = await res.json().catch(() => ({}));
@@ -252,9 +256,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
     try {
       if (editingProduct) {
-        const res = await fetch(`/api/products/${editingProduct.id}`, {
+        const res = await authFetch(`/api/products/${editingProduct.id}`, {
           method: 'PUT',
-          headers: adminHeaders,
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
         if (!res.ok) {
@@ -262,9 +266,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           throw new Error(d.error || 'Erro ao salvar modificações.');
         }
       } else {
-        const res = await fetch('/api/products', {
+        const res = await authFetch('/api/products', {
           method: 'POST',
-          headers: adminHeaders,
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
         if (!res.ok) {
@@ -287,9 +291,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setIsDeleting(true);
 
     try {
-      const res = await fetch(`/api/products/${productToDelete.id}`, {
+      const res = await authFetch(`/api/products/${productToDelete.id}`, {
         method: 'DELETE',
-        headers: adminHeaders,
+        headers: { 'Content-Type': 'application/json' },
       });
 
       if (!res.ok) {
@@ -316,38 +320,42 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleQuickStockSave = async () => {
     if (!adjustModalProduct) return;
     try {
-      await fetch(`/api/products/${adjustModalProduct.id}`, {
+      const res = await authFetch(`/api/products/${adjustModalProduct.id}`, {
         method: 'PUT',
-        headers: adminHeaders,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           stock: Number(newStockVal),
           stockChangeReason: stockReason,
         }),
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Erro ao ajustar estoque.');
+      }
       setAdjustModalProduct(null);
       fetchAllData();
       onRefreshProducts();
     } catch (err: any) {
-      alert(err.message);
+      showActionToast(err.message, 'error');
     }
   };
 
   // Change order status with real transactional stock mechanics
   const handleUpdateOrderStatus = async (orderId: string, newStatus: OrderStatus) => {
     try {
-      const res = await fetch(`/api/orders/${orderId}/status`, {
+      const res = await authFetch(`/api/orders/${orderId}/status`, {
         method: 'PUT',
-        headers: adminHeaders,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
       });
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error);
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Erro ao atualizar pedido.');
       }
       fetchAllData();
       onRefreshProducts();
     } catch (err: any) {
-      alert(err.message);
+      showActionToast(err.message, 'error');
     }
   };
 
@@ -358,14 +366,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     notes?: string
   ) => {
     try {
-      await fetch(`/api/bath-services/${id}`, {
+      const res = await authFetch(`/api/bath-services/${id}`, {
         method: 'PUT',
-        headers: adminHeaders,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status, notes }),
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Erro ao atualizar serviço de banho.');
+      }
       fetchAllData();
     } catch (err: any) {
-      alert(err.message);
+      showActionToast(err.message, 'error');
     }
   };
 
@@ -377,9 +389,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setSecuritySuccess('');
 
     try {
-      const res = await fetch('/api/admin/credentials', {
+      const res = await authFetch('/api/admin/credentials', {
         method: 'PUT',
-        headers: adminHeaders,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: adminName.trim(),
           email: adminEmail.trim(),
@@ -1685,7 +1697,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     type="text"
                     value={formNewImageUrl}
                     onChange={(e) => setFormNewImageUrl(e.target.value)}
-                    placeholder="Ou cole URL/caminho da foto (https://... ou /uploads/...)"
+                    placeholder="Ou cole a URL completa da foto (https://...)"
                     className="flex-1 text-xs p-2.5 rounded-xl border border-stone-300 bg-white focus:outline-none focus:border-[#B47B8E]"
                   />
                   <button
@@ -1958,7 +1970,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       {photoModalProduct && (
         <ProductPhotoManagerModal
           product={photoModalProduct}
-          adminId={currentUser?.id || 'admin-01'}
           onClose={() => setPhotoModalProduct(null)}
           onProductUpdated={(updated) => {
             setPhotoModalProduct(updated);

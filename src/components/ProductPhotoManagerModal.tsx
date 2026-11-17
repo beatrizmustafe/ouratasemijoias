@@ -11,10 +11,10 @@ import {
   Image as ImageIcon,
 } from 'lucide-react';
 import type { Product } from '../types/index.ts';
+import { authFetch } from '../lib/apiClient.ts';
 
 interface ProductPhotoManagerModalProps {
   product: Product | null;
-  adminId: string;
   onClose: () => void;
   onProductUpdated: (updated: Product) => void;
   onRequestRemoveProduct?: (product: Product) => void;
@@ -22,7 +22,6 @@ interface ProductPhotoManagerModalProps {
 
 export const ProductPhotoManagerModal: React.FC<ProductPhotoManagerModalProps> = ({
   product,
-  adminId,
   onClose,
   onProductUpdated,
   onRequestRemoveProduct,
@@ -38,11 +37,6 @@ export const ProductPhotoManagerModal: React.FC<ProductPhotoManagerModalProps> =
   if (!product) return null;
 
   const images = Array.isArray(product.images) ? product.images : [];
-
-  const adminHeaders: HeadersInit = {
-    'Content-Type': 'application/json',
-    'x-admin-id': adminId,
-  };
 
   const readFileAsDataUrl = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
@@ -72,9 +66,9 @@ export const ProductPhotoManagerModal: React.FC<ProductPhotoManagerModalProps> =
         }
 
         const dataUrl = await readFileAsDataUrl(file);
-        const res = await fetch(`/api/products/${product.id}/images`, {
+        const res = await authFetch(`/api/products/${product.id}/images`, {
           method: 'POST',
-          headers: adminHeaders,
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             dataUrl,
             fileName: file.name,
@@ -115,9 +109,9 @@ export const ProductPhotoManagerModal: React.FC<ProductPhotoManagerModalProps> =
     setSuccess('');
 
     try {
-      const res = await fetch(`/api/products/${product.id}/images`, {
+      const res = await authFetch(`/api/products/${product.id}/images`, {
         method: 'POST',
-        headers: adminHeaders,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           imageUrl: cleanUrl,
           asPrimary,
@@ -144,9 +138,9 @@ export const ProductPhotoManagerModal: React.FC<ProductPhotoManagerModalProps> =
     setSuccess('');
 
     try {
-      const res = await fetch(`/api/products/${product.id}/images/primary`, {
+      const res = await authFetch(`/api/products/${product.id}/images/primary`, {
         method: 'PUT',
-        headers: adminHeaders,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ index }),
       });
       const data = await res.json().catch(() => ({}));
@@ -168,9 +162,9 @@ export const ProductPhotoManagerModal: React.FC<ProductPhotoManagerModalProps> =
     setSuccess('');
 
     try {
-      const res = await fetch(`/api/products/${product.id}/images`, {
+      const res = await authFetch(`/api/products/${product.id}/images`, {
         method: 'DELETE',
-        headers: adminHeaders,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ index }),
       });
       const data = await res.json().catch(() => ({}));

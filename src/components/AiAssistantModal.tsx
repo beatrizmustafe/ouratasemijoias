@@ -14,6 +14,7 @@ import {
   AlertTriangle,
   Info,
 } from 'lucide-react';
+import { authFetch } from '../lib/apiClient.ts';
 
 export type AiMode =
   | 'description'
@@ -29,7 +30,6 @@ interface AiAssistantModalProps {
   onApplyToProduct?: (text: string, field: 'name' | 'description') => void;
   initialProductName?: string;
   initialCategory?: string;
-  adminId?: string;
 }
 
 const AI_FUNCTIONS: {
@@ -102,7 +102,6 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
   onApplyToProduct,
   initialProductName = '',
   initialCategory = 'Colares',
-  adminId = 'admin-01',
 }) => {
   if (!isOpen) return null;
 
@@ -124,11 +123,10 @@ export const AiAssistantModal: React.FC<AiAssistantModalProps> = ({
     setErrorMessage('');
 
     try {
-      const response = await fetch('/api/ai/generate', {
+      const response = await authFetch('/api/ai/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-admin-id': adminId || 'admin-01',
         },
         body: JSON.stringify({
           mode,

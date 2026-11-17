@@ -1,4 +1,4 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
 
 function parseEnvEntry(raw: string | undefined, targetKey: string): string {
   if (!raw) return '';
@@ -9,11 +9,16 @@ function parseEnvEntry(raw: string | undefined, targetKey: string): string {
   if (match && match[1]) {
     return match[1].trim();
   }
+  // Handle pure URL extraction for SUPABASE_URL if malformed without key prefix
+  if (targetKey === 'SUPABASE_URL') {
+    const urlMatch = trimmed.match(/https:\/\/[a-zA-Z0-9-]+\.supabase\.co/);
+    if (urlMatch) return urlMatch[0];
+  }
   // If it does not contain spaces or other KEY= tokens, return as-is
   if (!trimmed.includes(' ') && !trimmed.includes('=')) {
     return trimmed;
   }
-  return trimmed;
+  return '';
 }
 
 export function resolveSupabaseEnv() {
@@ -22,6 +27,7 @@ export function resolveSupabaseEnv() {
     process.env.SUPABASE_PUBLISHABLE_KEY ||
     process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
     process.env.SUPABASE_ANON_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
     '';
   const rawSec =
     process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
@@ -29,10 +35,14 @@ export function resolveSupabaseEnv() {
   const url = parseEnvEntry(rawUrl, 'SUPABASE_URL');
   const publishableKey =
     parseEnvEntry(rawPub, 'SUPABASE_PUBLISHABLE_KEY') ||
-    parseEnvEntry(rawUrl, 'SUPABASE_PUBLISHABLE_KEY');
+    parseEnvEntry(rawPub, 'SUPABASE_ANON_KEY') ||
+    parseEnvEntry(rawUrl, 'SUPABASE_PUBLISHABLE_KEY') ||
+    parseEnvEntry(rawUrl, 'SUPABASE_ANON_KEY');
   const secretKey =
     parseEnvEntry(rawSec, 'SUPABASE_SECRET_KEY') ||
-    parseEnvEntry(rawUrl, 'SUPABASE_SECRET_KEY');
+    parseEnvEntry(rawSec, 'SUPABASE_SERVICE_ROLE_KEY') ||
+    parseEnvEntry(rawUrl, 'SUPABASE_SECRET_KEY') ||
+    parseEnvEntry(rawUrl, 'SUPABASE_SERVICE_ROLE_KEY');
 
   const rawUrlMalformed =
     !!rawUrl.trim() && (rawUrl.includes(' ') || rawUrl.includes('SUPABASE_'));
@@ -40,10 +50,34 @@ export function resolveSupabaseEnv() {
   return { url, publishableKey, secretKey, rawUrlMalformed };
 }
 
-export function getSupabaseAdmin(): SupabaseClient | null {
-  const { url, publishableKey, secretKey } = resolveSupabaseEnv();
-  const key = secretKey || publishableKey;
+/**
+ * Returns a privileged Supabase client backed strictly by SUPABASE_SECRET_KEY / SUPABASE_SERVICE_ROLE_KEY.
+ * Returns null if the secret key is not configured (never falls back silently to publishable key).
+ */
+export function getSupabaseServiceAdmin(): SupabaseClient | null {
+  const { url, secretKey } = resolveSupabaseEnv();
+  if (!url || !secretKey) {
+    return null;
+  }
 
+  return createClient(url, secretKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+}
+
+/**
+ * Compatibility helper for existing admin/status callers.
+ */
+export function getSupabaseAdmin(): SupabaseClient | null {
+  return getSupabaseServiceAdmin();
+}
+
+export function getSupabasePublicServerClient(): SupabaseClient | null {
+  const { url, publishableKey, secretKey } = resolveSupabaseEnv();
+  const key = publishableKey || secretKey;
   if (!url || !key) {
     return null;
   }
@@ -54,6 +88,32 @@ export function getSupabaseAdmin(): SupabaseClient | null {
       persistSession: false,
     },
   });
+}
+
+/**
+ * Validates a Supabase Auth JWT access token directly against Supabase Auth API.
+ */
+export async function verifySupabaseJwt(
+  accessToken: string
+): Promise<{ user: User | null; error: string | null }> {
+  if (!accessToken || !accessToken.trim()) {
+    return { user: null, error: 'Token JWT ausente.' };
+  }
+
+  const verifier = getSupabaseServiceAdmin() || getSupabasePublicServerClient();
+  if (!verifier) {
+    return { user: null, error: 'Supabase não configurado no servidor.' };
+  }
+
+  try {
+    const { data, error } = await verifier.auth.getUser(accessToken.trim());
+    if (error || !data?.user) {
+      return { user: null, error: error?.message || 'Sessão inválida ou expirada.' };
+    }
+    return { user: data.user, error: null };
+  } catch (err: any) {
+    return { user: null, error: err?.message || 'Falha ao validar token JWT.' };
+  }
 }
 
 export async function checkSupabaseStatus() {
@@ -139,10 +199,7 @@ export async function checkSupabaseStatus() {
 
   try {
     for (const table of tablesToCheck) {
-      const { error } = await client
-        .from(table)
-        .select('*')
-        .limit(1);
+      const { error } = await client.from(table).select('*').limit(1);
 
       if (!error) {
         tablesFound.push(table);

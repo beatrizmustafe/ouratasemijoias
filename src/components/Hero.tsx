@@ -13,7 +13,7 @@ export const Hero: React.FC<HeroProps> = ({
   onExploreBath,
 }) => {
   const heroImage =
-    '/src/assets/images/necklace_gold_choker_1794270256905.jpg';
+    '/assets/images/necklace_gold_choker_1794270256905.jpg';
   const officialLogo =
     '/assets/aistudio/WhatsApp_Image_2026-11-08_at_23.49.43_d9839c0b.jpeg';
 
