@@ -1,0 +1,16 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Banco de dados local e uploads de runtime
+data/db.json
+data/*.json
+data/uploads/
+
+# Artefatos e arquivos temporários de sessão
+.aistudio/

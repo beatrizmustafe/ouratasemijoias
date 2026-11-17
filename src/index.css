@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@theme {
+  --font-serif: 'Playfair Display', Georgia, serif;
+  --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --color-rose-brand: #B47B8E;
+  --color-rose-dark: #975F72;
+  --color-rose-light: #F7EFF2;
+  --color-rose-border: #E8D9DF;
+  --color-noir-brand: #221C1E;
+  --color-noir-muted: #594D52;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+  }
+  h1, h2, h3, .font-display {
+    font-family: var(--font-serif);
+  }
+}

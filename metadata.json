@@ -1,0 +1,6 @@
+{
+  "name": "Ourata Semijoias — Plataforma de Vendas e Gestão",
+  "description": "Plataforma de e-commerce e gestão para Ourata Semijoias: catálogo atacadista/varejo, estoque integrado, pedidos WhatsApp, emissão de PDF, serviços de banho e assistente de IA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
