@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   X,
   Mail,
@@ -19,20 +19,23 @@ interface CustomerAuthModalProps {
   onLoginSuccess: (user: UserProfile) => void;
 }
 
+const createFieldNonce = () => Math.random().toString(36).slice(2, 10);
+
 export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
   isOpen,
   onClose,
   onLoginSuccess,
 }) => {
-  if (!isOpen) return null;
-
   // Primary tab: 'customer' or 'admin'
   const [authType, setAuthType] = useState<'customer' | 'admin'>('customer');
 
   // Customer submode: 'login' | 'register' | 'magic' | 'forgot'
   const [customerMode, setCustomerMode] = useState<'login' | 'register' | 'magic' | 'forgot'>('login');
 
-  // Form fields
+  // Random suffix per modal open to prevent browser credential autofill
+  const [fieldNonce, setFieldNonce] = useState<string>(createFieldNonce);
+
+  // Form fields (always initialized empty)
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -46,7 +49,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
   const [city, setCity] = useState('Limeira');
   const [state, setState] = useState('SP');
 
-  // Admin specific form
+  // Admin specific form (always initialized empty)
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [showAdminPassword, setShowAdminPassword] = useState(false);
@@ -54,6 +57,23 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [infoMessage, setInfoMessage] = useState('');
+
+  // Reset credentials and rotate randomized field names every time the modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setFieldNonce(createFieldNonce());
+      setEmail('');
+      setPassword('');
+      setShowPassword(false);
+      setAdminEmail('');
+      setAdminPassword('');
+      setShowAdminPassword(false);
+      setError('');
+      setInfoMessage('');
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
 
   const loadAuthenticatedProfile = async (accessToken: string): Promise<UserProfile> => {
     const res = await fetch('/api/auth/me', {
@@ -412,6 +432,11 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
           <button
             onClick={() => {
               setAuthType('customer');
+              setFieldNonce(createFieldNonce());
+              setEmail('');
+              setPassword('');
+              setAdminEmail('');
+              setAdminPassword('');
               setError('');
               setInfoMessage('');
             }}
@@ -427,6 +452,11 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
           <button
             onClick={() => {
               setAuthType('admin');
+              setFieldNonce(createFieldNonce());
+              setEmail('');
+              setPassword('');
+              setAdminEmail('');
+              setAdminPassword('');
               setError('');
               setInfoMessage('');
             }}
@@ -462,6 +492,9 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
               <button
                 onClick={() => {
                   setCustomerMode('login');
+                  setFieldNonce(createFieldNonce());
+                  setEmail('');
+                  setPassword('');
                   setError('');
                   setInfoMessage('');
                 }}
@@ -476,6 +509,9 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
               <button
                 onClick={() => {
                   setCustomerMode('register');
+                  setFieldNonce(createFieldNonce());
+                  setEmail('');
+                  setPassword('');
                   setError('');
                   setInfoMessage('');
                 }}
@@ -490,6 +526,9 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
               <button
                 onClick={() => {
                   setCustomerMode('magic');
+                  setFieldNonce(createFieldNonce());
+                  setEmail('');
+                  setPassword('');
                   setError('');
                   setInfoMessage('');
                 }}
@@ -505,7 +544,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
 
             {/* Customer Login Form */}
             {customerMode === 'login' && (
-              <form onSubmit={handleCustomerLogin} className="space-y-3.5">
+              <form onSubmit={handleCustomerLogin} autoComplete="off" className="space-y-3.5">
                 <div>
                   <label className="text-[11px] font-semibold text-stone-700 block mb-1">
                     E-mail Cadastrado *
@@ -513,10 +552,15 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
                   <div className="relative">
                     <input
                       type="email"
+                      name={`cli_e_${fieldNonce}`}
                       required
+                      autoComplete="off"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="cliente@exemplo.com.br"
+                      placeholder="E-mail da cliente"
                       className="w-full text-xs pl-9 pr-3 py-2.5 rounded-xl border border-stone-300 focus:outline-none focus:border-[#B47B8E]"
                     />
                     <Mail className="w-4 h-4 absolute left-3 top-3 text-stone-400" />
@@ -532,6 +576,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
                       type="button"
                       onClick={() => {
                         setCustomerMode('forgot');
+                        setEmail('');
                         setError('');
                         setInfoMessage('');
                       }}
@@ -543,7 +588,10 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
                   <div className="relative">
                     <input
                       type={showPassword ? 'text' : 'password'}
+                      name={`cli_p_${fieldNonce}`}
                       required
+                      autoComplete="new-password"
+                      spellCheck={false}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="Sua senha de cliente"
@@ -572,7 +620,11 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
 
             {/* Customer Register Form */}
             {customerMode === 'register' && (
-              <form onSubmit={handleCustomerRegister} className="space-y-3 max-h-[48vh] overflow-y-auto pr-1">
+              <form
+                onSubmit={handleCustomerRegister}
+                autoComplete="off"
+                className="space-y-3 max-h-[48vh] overflow-y-auto pr-1"
+              >
                 <div>
                   <label className="text-[11px] font-semibold text-stone-700 block mb-1">
                     Nome Completo *
@@ -594,10 +646,15 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
                     </label>
                     <input
                       type="email"
+                      name={`cli_reg_e_${fieldNonce}`}
                       required
+                      autoComplete="off"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="cliente@email.com"
+                      placeholder="Digite seu e-mail"
                       className="w-full text-xs p-2.5 rounded-xl border border-stone-300 focus:outline-none focus:border-[#B47B8E]"
                     />
                   </div>
@@ -623,8 +680,11 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
                     </label>
                     <input
                       type="password"
+                      name={`cli_reg_p_${fieldNonce}`}
                       required
                       minLength={6}
+                      autoComplete="new-password"
+                      spellCheck={false}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="Crie uma senha"
@@ -727,6 +787,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
                   e.preventDefault();
                   handleRequestMagicLink(email, true);
                 }}
+                autoComplete="off"
                 className="space-y-3"
               >
                 <div>
@@ -735,10 +796,15 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
                   </label>
                   <input
                     type="email"
+                    name={`cli_magic_e_${fieldNonce}`}
                     required
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="cliente@email.com"
+                    placeholder="E-mail da cliente"
                     className="w-full text-xs p-2.5 rounded-xl border border-stone-300 focus:outline-none focus:border-[#B47B8E]"
                   />
                 </div>
@@ -759,6 +825,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
                   e.preventDefault();
                   handleResetPassword(email);
                 }}
+                autoComplete="off"
                 className="space-y-3"
               >
                 <div>
@@ -767,10 +834,15 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
                   </label>
                   <input
                     type="email"
+                    name={`cli_forgot_e_${fieldNonce}`}
                     required
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="cliente@exemplo.com.br"
+                    placeholder="E-mail para recuperação"
                     className="w-full text-xs p-2.5 rounded-xl border border-stone-300 focus:outline-none focus:border-[#B47B8E]"
                   />
                 </div>
@@ -796,7 +868,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
 
         {/* -------------------- ADMIN FLOW -------------------- */}
         {authType === 'admin' && (
-          <form onSubmit={handleAdminLogin} className="space-y-4">
+          <form onSubmit={handleAdminLogin} autoComplete="off" className="space-y-4">
             <div>
               <label className="text-[11px] font-semibold text-stone-700 block mb-1">
                 E-mail da Administradora *
@@ -804,10 +876,15 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
               <div className="relative">
                 <input
                   type="email"
+                  name={`adm_e_${fieldNonce}`}
                   required
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   value={adminEmail}
                   onChange={(e) => setAdminEmail(e.target.value)}
-                  placeholder="ouratasemijoias@gmail.com"
+                  placeholder="E-mail da administradora"
                   className="w-full text-xs pl-9 pr-3 py-2.5 rounded-xl border border-stone-300 focus:outline-none focus:border-stone-800"
                 />
                 <Mail className="w-4 h-4 absolute left-3 top-3 text-stone-400" />
@@ -821,7 +898,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
                 </label>
                 <button
                   type="button"
-                  onClick={() => handleResetPassword(adminEmail || 'ouratasemijoias@gmail.com')}
+                  onClick={() => handleResetPassword(adminEmail)}
                   className="text-[11px] font-semibold text-[#B47B8E] hover:underline cursor-pointer"
                 >
                   Redefinir senha por e-mail
@@ -830,7 +907,10 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
               <div className="relative">
                 <input
                   type={showAdminPassword ? 'text' : 'password'}
+                  name={`adm_p_${fieldNonce}`}
                   required
+                  autoComplete="new-password"
+                  spellCheck={false}
                   value={adminPassword}
                   onChange={(e) => setAdminPassword(e.target.value)}
                   placeholder="••••••••"
@@ -860,9 +940,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
               <button
                 type="button"
                 disabled={loading}
-                onClick={() =>
-                  handleRequestMagicLink(adminEmail || 'ouratasemijoias@gmail.com', false)
-                }
+                onClick={() => handleRequestMagicLink(adminEmail, false)}
                 className="w-full py-2.5 px-3 rounded-xl border border-stone-300 bg-stone-50 hover:bg-stone-100 text-stone-700 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
               >
                 <Mail className="w-3.5 h-3.5 text-[#B47B8E]" />
